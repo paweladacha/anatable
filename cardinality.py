@@ -57,9 +57,37 @@ class CardinalityDict(dict):
 
         return CardinalityDict(filtered_columns)
 
+    def filter_below_ratio(self, ratio, total_rows):
+        """
+        Filters the cardinality dictionary to return columns with cardinality below a certain ratio of total rows.
+
+        Parameters:
+        ratio (float): The maximum ratio of cardinality to total rows allowed for a column to be included.
+        total_rows (int): The total number of rows in the DataFrame.
+
+        Returns:
+        CardinalityDict: A dictionary with columns that have cardinality below the specified ratio of total rows.
+        """
+        threshold = ratio * total_rows
+        return self.filter_below_threshold(threshold)
+
+    def filter_below_cumulative_ratio(self, ratio, total_rows):
+        """
+        Filters the cardinality dictionary to return columns until the cumulative cardinality exceeds a certain ratio of total rows.
+
+        Parameters:
+        ratio (float): The cumulative ratio of cardinality to total rows.
+        total_rows (int): The total number of rows in the DataFrame.
+
+        Returns:
+        CardinalityDict: A dictionary with columns until the cumulative cardinality exceeds the specified ratio of total rows.
+        """
+        threshold = ratio * total_rows
+        return self.filter_below_cumulative_threshold(threshold)
+
 class PandasCardinality:
     @staticmethod
-    def cols_cardinality(df, ignored_columns=None, only_cols=None):
+    def cols_cardinality(df, ignored_columns=None, only_cols=None, dropna=False) -> CardinalityDict:
         """
         Returns the cardinality of multiple columns in a DataFrame.
 
@@ -68,7 +96,7 @@ class PandasCardinality:
         cols (list): A list of column names.
 
         Returns:
-        dict: A dictionary with column names as keys and their cardinality as values.
+        CardinalityDict: A dictionary with column names as keys and their cardinality as values.
         """
         if only_cols is not None:
             columns_to_process = only_cols
@@ -76,7 +104,7 @@ class PandasCardinality:
             columns_to_process = df.columns
         else:
             columns_to_process = [col for col in df.columns if col not in ignored_columns]
-        return CardinalityDict({col: df[col].nunique() for col in columns_to_process})
+        return CardinalityDict({col: df[col].nunique(dropna=dropna) for col in columns_to_process})
 
     @staticmethod
     def col_cardinality(df, col):
