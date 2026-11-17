@@ -1,0 +1,143 @@
+class CardinalityDict(dict):
+    def _sorted(self, descending=False)->list[tuple[str, int]]:
+        """
+        Sorts the cardinality dictionary, by default in ascending order of cardinality.
+
+        Parameters:
+        descending (bool): If True, sorts in descending order of cardinality.
+
+        Returns:
+        list[tuple[str, int]]: A list of tuples with column names as keys and their cardinality as values, sorted by cardinality.
+        """
+        return sorted(self.items(), key=lambda item: item[1], reverse=descending)
+
+    def filter_bottom_n(self, n):
+        """
+        Filters the cardinality dictionary to return the bottom n columns with the lowest cardinality.
+
+        Parameters:
+        n (int): The number of bottom columns to return.
+
+        Returns:
+        CardinalityDict: A dictionary with the bottom n columns and their cardinality.
+        """
+        return CardinalityDict(self._sorted()[:n])
+
+    def filter_below_threshold(self, threshold):
+        """
+        Filters the cardinality dictionary to return columns with cardinality below a certain threshold.
+
+        Parameters:
+        threshold (int): The maximum cardinality allowed for a column to be included.
+
+        Returns:
+        CardinalityDict: A dictionary with columns that have cardinality below the threshold.
+        """
+        return CardinalityDict({col: card for col, card in self.items() if card < threshold})
+
+    def filter_below_cumulative_threshold(self, threshold):
+        """
+        Filters the cardinality dictionary to return columns until the cumulative cardinality exceeds a certain threshold.
+
+        Parameters:
+        threshold (int): The cumulative cardinality threshold.
+
+        Returns:
+        CardinalityDict: A dictionary with columns until the cumulative cardinality exceeds the threshold.
+        """
+        sorted_columns = self._sorted()
+        cumulative_cardinality = 0
+        filtered_columns = {}
+
+        for col, card in sorted_columns:
+            if cumulative_cardinality + card > threshold:
+                break
+            filtered_columns[col] = card
+            cumulative_cardinality += card
+
+        return CardinalityDict(filtered_columns)
+
+class PandasCardinality:
+    @staticmethod
+    def cols_cardinality(df, ignored_columns=None, only_cols=None):
+        """
+        Returns the cardinality of multiple columns in a DataFrame.
+
+        Parameters:
+        df (pandas.DataFrame): The DataFrame containing the columns.
+        cols (list): A list of column names.
+
+        Returns:
+        dict: A dictionary with column names as keys and their cardinality as values.
+        """
+        if only_cols is not None:
+            columns_to_process = only_cols
+        elif ignored_columns is None:
+            columns_to_process = df.columns
+        else:
+            columns_to_process = [col for col in df.columns if col not in ignored_columns]
+        return CardinalityDict({col: df[col].nunique() for col in columns_to_process})
+
+    @staticmethod
+    def col_cardinality(df, col):
+        """
+        Returns the cardinality of a column in a DataFrame.
+
+        Parameters:
+        df (pandas.DataFrame): The DataFrame containing the column.
+        col (str): The name of the column.
+
+        Returns:
+        int: The number of unique values in the column.
+        """
+        return df[col].nunique()
+
+try:
+    from pyspark.sql import DataFrame
+    from pyspark.sql import functions as F
+
+
+    class PySparkCardinality:
+        @staticmethod
+        def cols_cardinality(
+            df: DataFrame, 
+            ignored_columns: list[str] | None = None, 
+            only_cols: list[str] | None = None,
+            ascending: bool = True
+        ) -> dict[str, int]:
+            """
+            Returns the sorted cardinality of multiple columns in a PySpark DataFrame.
+            """
+            if only_cols is not None:
+                columns_to_process = only_cols
+            elif ignored_columns is None:
+                columns_to_process = df.columns
+            else:
+                ignored_set = set(ignored_columns)
+                columns_to_process = [col for col in df.columns if col not in ignored_set]
+
+            if not columns_to_process:
+                return {}
+
+            # Zbudowanie listy agregacji, aby wykonać wszystko w jednym przebiegu (1 Spark Job)
+            agg_exprs = [F.count_distinct(col).alias(col) for col in columns_to_process]
+            
+            # Wykonanie agregacji i pobranie pojedynczego wiersza wyników na driver
+            result_row = df.agg(*agg_exprs).first()
+            counts = result_row.asDict() if result_row else {}
+
+            # Sortowanie słownika po wartościach
+            return CardinalityDict(counts)
+
+        @staticmethod
+        def col_cardinality(df: DataFrame, col: str) -> int:
+            """
+            Returns the cardinality of a single column in a PySpark DataFrame.
+            """
+            result = df.agg(F.count_distinct(col)).first()
+            return result[0] if result else 0
+        
+except ImportError:
+    import warnings
+
+    warnings.warn("PySpark integration is not available.", ImportWarning)
