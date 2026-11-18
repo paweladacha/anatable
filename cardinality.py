@@ -130,38 +130,58 @@ try:
     from pyspark.sql import functions as F
 
 
+    from pyspark.sql import DataFrame, functions as F
+
     class PySparkCardinality:
         @staticmethod
         def cols_cardinality(
-            df: DataFrame, 
-            ignored_columns: list[str] | None = None, 
+            df: DataFrame,
+            ignored_columns: list[str] | None = None,
             only_cols: list[str] | None = None,
-            ascending: bool = True
+            exact: bool = False,
+            rsd: float = 0.05
         ) -> dict[str, int]:
             """
-            Returns the sorted cardinality of multiple columns in a PySpark DataFrame.
+            Oblicza kardynalność kolumn w jednym przebiegu (1 Spark Job).
+            Domyślnie używa przybliżenia (HyperLogLog) dla maksymalnej wydajności.
             """
+            df_cols_set = set(df.columns)
+
             if only_cols is not None:
-                columns_to_process = only_cols
+                columns_to_process = [c for c in only_cols if c in df_cols_set]
             elif ignored_columns is None:
                 columns_to_process = df.columns
             else:
                 ignored_set = set(ignored_columns)
-                columns_to_process = [col for col in df.columns if col not in ignored_set]
+                columns_to_process = [c for c in df.columns if c not in ignored_set]
 
             if not columns_to_process:
                 return {}
 
-            # Zbudowanie listy agregacji, aby wykonać wszystko w jednym przebiegu (1 Spark Job)
-            agg_exprs = [F.count_distinct(col).alias(col) for col in columns_to_process]
-            
-            # Wykonanie agregacji i pobranie pojedynczego wiersza wyników na driver
-            result_row = df.agg(*agg_exprs).first()
-            counts = result_row.asDict() if result_row else {}
+            # Wybór funkcji agregującej: dokładna vs przybliżona (HyperLogLog)
+            count_fn = (
+                (lambda c: F.count_distinct(F.col(c)))
+                if exact
+                else (lambda c: F.approx_count_distinct(F.col(c), rsd=rsd))
+            )
 
-            # Sortowanie słownika po wartościach
-            return CardinalityDict(counts, total_rows_count=df.count())
+            # Unikalny alias dla total_rows, żeby nie kolidował z żadną kolumną w df
+            total_col_alias = "__total_rows_count__"
+            agg_exprs = [F.count("*").alias(total_col_alias)] + [
+                count_fn(col).alias(col) for col in columns_to_process
+            ]
+
+            # Jeden Spark Job na wszystko
+            result_row = df.agg(*agg_exprs).first()
             
+            if not result_row:
+                return {}
+
+            result_dict = result_row.asDict()
+            total_rows = result_dict.pop(total_col_alias)
+
+            return CardinalityDict(result_dict, total_rows_count=total_rows)
+    
         @staticmethod
         def col_cardinality(df: DataFrame, col: str) -> int:
             """
