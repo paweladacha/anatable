@@ -1,4 +1,8 @@
 class CardinalityDict(dict):
+    def __init__(self, *args, total_rows_count=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.total_rows_count = total_rows_count
+
     def _sorted(self, descending=False)->list[tuple[str, int]]:
         """
         Sorts the cardinality dictionary, by default in ascending order of cardinality.
@@ -57,7 +61,7 @@ class CardinalityDict(dict):
 
         return CardinalityDict(filtered_columns)
 
-    def filter_below_ratio(self, ratio, total_rows):
+    def filter_below_ratio(self, ratio):
         """
         Filters the cardinality dictionary to return columns with cardinality below a certain ratio of total rows.
 
@@ -68,10 +72,10 @@ class CardinalityDict(dict):
         Returns:
         CardinalityDict: A dictionary with columns that have cardinality below the specified ratio of total rows.
         """
-        threshold = ratio * total_rows
+        threshold = ratio * self.total_rows_count
         return self.filter_below_threshold(threshold)
 
-    def filter_below_cumulative_ratio(self, ratio, total_rows):
+    def filter_below_cumulative_ratio(self, ratio):
         """
         Filters the cardinality dictionary to return columns until the cumulative cardinality exceeds a certain ratio of total rows.
 
@@ -82,7 +86,7 @@ class CardinalityDict(dict):
         Returns:
         CardinalityDict: A dictionary with columns until the cumulative cardinality exceeds the specified ratio of total rows.
         """
-        threshold = ratio * total_rows
+        threshold = ratio * self.total_rows_count
         return self.filter_below_cumulative_threshold(threshold)
 
 class PandasCardinality:
@@ -104,8 +108,9 @@ class PandasCardinality:
             columns_to_process = df.columns
         else:
             columns_to_process = [col for col in df.columns if col not in ignored_columns]
-        return CardinalityDict({col: df[col].nunique(dropna=dropna) for col in columns_to_process})
 
+        return CardinalityDict({col: df[col].nunique(dropna=dropna) for col in columns_to_process}, total_rows_count=len(df))
+        
     @staticmethod
     def col_cardinality(df, col):
         """
@@ -155,8 +160,8 @@ try:
             counts = result_row.asDict() if result_row else {}
 
             # Sortowanie słownika po wartościach
-            return CardinalityDict(counts)
-
+            return CardinalityDict(counts, total_rows_count=df.count())
+            
         @staticmethod
         def col_cardinality(df: DataFrame, col: str) -> int:
             """
