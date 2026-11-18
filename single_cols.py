@@ -66,20 +66,17 @@ try:
             # though if strict global ordering is required, use zipWithIndex or a natural sort key.
             df_indexed = df.withColumn("_row_id", F.monotonically_increasing_id())
 
-            # 2. Build a filter condition: keep row if it is the 1st occurrence for ANY target column
-            keep_conditions = [
-                F.row_number().over(Window.partitionBy(col).orderBy("_row_id")) == 1
-                for col in cols
-            ]
+            # 2. Dla każdej kolumny o niskiej kardynalności znajdujemy po jednym przykładowym _row_id dla każdej unikalnej wartości
+            unique_row_ids = set()
 
-            # 3. Combine conditions with OR (equivalent to set union of indexes) and filter in one pass
-            combined_condition = reduce(or_, keep_conditions)
+            for col_name in low_card_spark.keys():
+                # Pobieramy po jednym identyfikatorze wiersza dla każdej unikalnej wartości danej kolumny
+                sampled_ids = df_indexed.groupBy(col_name).agg(F.first("_row_id").alias("id")).select("id").collect()
+                unique_row_ids.update([r["id"] for r in sampled_ids])
 
-            return (
-                df_indexed
-                .filter(combined_condition)
-                .drop("_row_id")
-            )
+            # 3. Filtrujemy oryginalny DataFrame pozostawiając tylko wiersze, które reprezentują te unikalne wartości
+            return df_indexed.filter(F.col("_row_id").isin(list(unique_row_ids))).drop("_row_id")
+
         
 except ImportError:
     import warnings
